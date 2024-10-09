@@ -1,0 +1,9 @@
+[05-Oct-2024 02:01:23 Europe/Berlin] PHP Fatal error:  Uncaught Error: Call to undefined function createInvoice() in C:\xampp\htdocs\invoice_subplanet\Public\invoice.php:23
+Stack trace:
+#0 {main}
+  thrown in C:\xampp\htdocs\invoice_subplanet\Public\invoice.php on line 23
+[05-Oct-2024 02:01:56 Europe/Berlin] PHP Fatal error:  Uncaught Error: Call to undefined function createInvoice() in C:\xampp\htdocs\invoice_subplanet\Public\invoice.php:23
+Stack trace:
+#0 {main}
+  thrown in C:\xampp\htdocs\invoice_subplanet\Public\invoice.php on line 23
+[06-Oct-2024 19:18:39 Europe/Berlin] PHP Warning:  Constant LOGO_PATH already defined in C:\xampp\htdocs\oldinvoice\Public\invoice.php on line 20

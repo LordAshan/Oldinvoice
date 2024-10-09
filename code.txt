@@ -1,0 +1,2541 @@
+C:\xampp\htdocs\oldinvoice\Public\fetch_price.php
+<?php
+// Public/fetch_price.php
+
+// Start the session if not already started
+if (session_status() == PHP_SESSION_NONE) {
+    session_start();
+}
+
+// Include necessary files
+require_once '../src/lib/functions.php'; // Ensure the path is correct
+
+header('Content-Type: application/json');
+
+// Get the product name from the request
+$product_name = $_GET['product_name'] ?? '';
+
+if ($product_name) {
+    // Fetch product details by product name
+    $product = getProductByName($product_name);
+
+    if ($product) {
+        // Return product details as JSON
+        echo json_encode([
+            'success' => true,
+            'product_number' => $product['product_number'],
+            'price' => (float)$product['price']
+        ]);
+    } else {
+        echo json_encode(['success' => false, 'message' => 'Product not found']);
+    }
+} else {
+    echo json_encode(['success' => false, 'message' => 'Invalid product name']);
+}
+?>
+
+
+C:\xampp\htdocs\oldinvoice\Public\index.php
+<?php
+// Public/index.php
+
+use App\Lib\Product;
+
+// Autoload classes using Composer
+require_once __DIR__ . '/../vendor/autoload.php';
+
+// Start the session and generate CSRF token
+session_start();
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+// Database connection
+require_once __DIR__ . '/../src/config/database.php';
+// $pdo is now available as a PDO instance
+
+// Instantiate the Product class with the PDO instance
+$productModel = new Product($pdo);
+
+// Handle form submission
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
+    // Validate CSRF token
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
+        $_SESSION['flash']['error'][] = 'Invalid CSRF token.';
+        header('Location: index.php');
+        exit;
+    }
+
+    $action = $_POST['action'];
+
+    if ($action === 'add') {
+        $product_number = $productModel->generateProductNumber();
+        $name = trim($_POST['name'] ?? '');
+        $price = floatval($_POST['price'] ?? 0);
+
+        // Validate inputs
+        if (empty($name) || $price <= 0) {
+            $_SESSION['flash']['error'][] = 'Please provide a valid product name and price.';
+        } else {
+            $success = $productModel->add($product_number, $name, $price);
+            $_SESSION['flash'][$success ? 'success' : 'error'][] = $success ? 'Product added successfully!' : 'Error adding product. Please try again.';
+        }
+
+    } elseif ($action === 'update') {
+        $product_id = intval($_POST['product_id'] ?? 0);
+        $product_number = trim($_POST['product_number'] ?? '');
+        $name = trim($_POST['name'] ?? '');
+        $price = floatval($_POST['price'] ?? 0);
+
+        // Validate inputs
+        if ($product_id <= 0 || empty($name) || $price <= 0) {
+            $_SESSION['flash']['error'][] = 'Please provide valid product details.';
+        } else {
+            $success = $productModel->update($product_id, $product_number, $name, $price);
+            $_SESSION['flash'][$success ? 'success' : 'error'][] = $success ? 'Product updated successfully!' : 'Error updating product. Please try again.';
+        }
+
+    } elseif ($action === 'delete') {
+        $product_id = intval($_POST['product_id'] ?? 0);
+
+        if ($product_id <= 0) {
+            $_SESSION['flash']['error'][] = 'Invalid product ID.';
+        } else {
+            $success = $productModel->delete($product_id);
+            $_SESSION['flash'][$success ? 'success' : 'error'][] = $success ? 'Product deleted successfully!' : 'Error deleting product. Please try again.';
+        }
+    }
+
+    header('Location: index.php');
+    exit;
+}
+
+// Fetch all products
+$products = $productModel->getAll();
+$product_number = $productModel->generateProductNumber();
+
+// Get product details for editing (optional if using modals)
+$editProduct = null;
+if (isset($_GET['edit_id'])) {
+    $editProduct = $productModel->getById(intval($_GET['edit_id']));
+}
+?>
+<?php include __DIR__ . '/../src/templates/header.php'; ?>
+<div class="container my-5">
+    <div class="row">
+        <!-- Product Form -->
+        <div class="col-lg-4 mb-4">
+            <div class="card">
+                <div class="card-header">
+                    <h4 class="mb-0"><?php echo $editProduct ? 'Update Product' : 'Add New Product'; ?></h4>
+                </div>
+                <div class="card-body">
+                    <!-- Display Success or Error Messages via Flash Messages -->
+                    <?php
+                        if (!empty($_SESSION['flash'])):
+                            foreach ($_SESSION['flash'] as $type => $messages):
+                                foreach ($messages as $message):
+                    ?>
+                                    <div class="alert alert-<?php echo htmlspecialchars($type); ?> alert-dismissible fade show" role="alert">
+                                        <?php echo htmlspecialchars($message, ENT_QUOTES, 'UTF-8'); ?>
+                                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                                    </div>
+                    <?php
+                                endforeach;
+                            endforeach;
+                            unset($_SESSION['flash']);
+                        endif;
+                    ?>
+
+                    <form action="index.php" method="post" class="needs-validation" novalidate>
+                        <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
+                        <input type="hidden" name="action" value="<?php echo $editProduct ? 'update' : 'add'; ?>">
+                        <?php if ($editProduct): ?>
+                            <input type="hidden" name="product_id" value="<?php echo htmlspecialchars($editProduct['id'], ENT_QUOTES, 'UTF-8'); ?>">
+                        <?php endif; ?>
+
+                        <div class="mb-3">
+                            <label for="product_number" class="form-label">Product Number</label>
+                            <input type="text" class="form-control" id="product_number" name="product_number" value="<?php echo htmlspecialchars($product_number ?? $editProduct['product_number'], ENT_QUOTES, 'UTF-8'); ?>" readonly>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="name" class="form-label">Product Name <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="name" name="name" value="<?php echo htmlspecialchars($editProduct['name'] ?? '', ENT_QUOTES, 'UTF-8'); ?>" required>
+                            <div class="invalid-feedback">
+                                Please enter a product name.
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="price" class="form-label">Price (LKR) <span class="text-danger">*</span></label>
+                            <input type="number" step="0.01" class="form-control" id="price" name="price" value="<?php echo htmlspecialchars($editProduct['price'] ?? '', ENT_QUOTES, 'UTF-8'); ?>" required>
+                            <div class="invalid-feedback">
+                                Please enter a valid price.
+                            </div>
+                        </div>
+
+                        <button type="submit" class="btn btn-<?php echo $editProduct ? 'warning' : 'primary'; ?> w-100"><?php echo $editProduct ? 'Update Product' : 'Add Product'; ?></button>
+                        <?php if ($editProduct): ?>
+                            <a href="index.php" class="btn btn-secondary w-100 mt-2">Cancel</a>
+                        <?php endif; ?>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Products Table -->
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h4 class="mb-0">Existing Products</h4>
+                </div>
+                <div class="card-body table-responsive">
+                    <table class="table table-striped table-hover align-middle">
+                        <thead class="table-dark">
+                            <tr>
+                                <th scope="col">Product Number</th>
+                                <th scope="col">Name</th>
+                                <th scope="col">Price (LKR)</th>
+                                <th scope="col" class="text-center">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (empty($products)): ?>
+                                <tr>
+                                    <td colspan="4" class="text-center">No products found.</td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach ($products as $product): ?>
+                                    <tr>
+                                        <td><?php echo htmlspecialchars($product['product_number'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                        <td><?php echo htmlspecialchars($product['name'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                        <td><?php echo number_format($product['price'], 2); ?></td>
+                                        <td class="text-center">
+                                            <!-- Action Dropdown -->
+                                            <div class="dropdown">
+                                                <button class="btn btn-secondary btn-sm dropdown-toggle" type="button" id="actionMenu<?php echo $product['id']; ?>" data-bs-toggle="dropdown" aria-expanded="false">
+                                                    Actions
+                                                </button>
+                                                <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="actionMenu<?php echo $product['id']; ?>">
+                                                    <li>
+                                                        <button type="button" class="dropdown-item edit-btn" data-bs-toggle="modal" data-bs-target="#editProductModal"
+                                                            data-id="<?php echo htmlspecialchars($product['id'], ENT_QUOTES, 'UTF-8'); ?>"
+                                                            data-number="<?php echo htmlspecialchars($product['product_number'], ENT_QUOTES, 'UTF-8'); ?>"
+                                                            data-name="<?php echo htmlspecialchars($product['name'], ENT_QUOTES, 'UTF-8'); ?>"
+                                                            data-price="<?php echo htmlspecialchars($product['price'], ENT_QUOTES, 'UTF-8'); ?>">
+                                                            <i class="bi bi-pencil-square me-2"></i>Edit
+                                                        </button>
+                                                    </li>
+                                                    <li>
+                                                        <form action="index.php" method="post" class="d-inline">
+                                                            <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
+                                                            <input type="hidden" name="action" value="delete">
+                                                            <input type="hidden" name="product_id" value="<?php echo htmlspecialchars($product['id'], ENT_QUOTES, 'UTF-8'); ?>">
+                                                            <button type="submit" class="dropdown-item text-danger" onclick="return confirm('Are you sure you want to delete this product?');">
+                                                                <i class="bi bi-trash me-2"></i>Delete
+                                                            </button>
+                                                        </form>
+                                                    </li>
+                                                </ul>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Product Modal -->
+<div class="modal fade" id="editProductModal" tabindex="-1" aria-labelledby="editProductModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <form action="index.php" method="post" class="modal-content needs-validation" novalidate>
+      <div class="modal-header">
+        <h5 class="modal-title" id="editProductModalLabel">Edit Product</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+          <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
+          <input type="hidden" name="action" value="update">
+          <input type="hidden" name="product_id" id="modal_product_id">
+
+          <div class="mb-3">
+              <label for="modal_product_number" class="form-label">Product Number</label>
+              <input type="text" class="form-control" id="modal_product_number" name="product_number" readonly>
+          </div>
+
+          <div class="mb-3">
+              <label for="modal_name" class="form-label">Product Name <span class="text-danger">*</span></label>
+              <input type="text" class="form-control" id="modal_name" name="name" required>
+              <div class="invalid-feedback">
+                  Please enter a product name.
+              </div>
+          </div>
+
+          <div class="mb-3">
+              <label for="modal_price" class="form-label">Price (LKR) <span class="text-danger">*</span></label>
+              <input type="number" step="0.01" class="form-control" id="modal_price" name="price" required>
+              <div class="invalid-feedback">
+                  Please enter a valid price.
+              </div>
+          </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="submit" class="btn btn-warning">Update Product</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<?php include __DIR__ . '/../src/templates/footer.php'; ?>
+
+<!-- Link to External JavaScript File -->
+<script src="../resources/js/index.js"></script>
+
+
+C:\xampp\htdocs\oldinvoice\Public\invoice.php
+<?php
+// Public/invoice.php
+
+// Start output buffering
+ob_start();
+
+// Enable error reporting temporarily (Disable in production)
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+
+// Start the session at the very beginning
+if (session_status() == PHP_SESSION_NONE) {
+    session_start();
+}
+
+// Include necessary functions and libraries
+require_once __DIR__ . '/../src/lib/functions.php'; // Adjust the path as necessary
+
+// Generate CSRF token if not set
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+// Handle form submission to create an invoice
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    createInvoice();
+    exit; // Ensure no further code is executed after PDF generation
+}
+
+// Fetch all products from the database
+$products = getAllProducts();
+?>
+<?php include __DIR__ . '/../src/templates/header.php'; ?> <!-- Include header -->
+
+<!-- Main Content Container -->
+<div class="container my-5">
+    <h1 class="text-center mb-4">Create Invoice</h1>
+
+    <!-- Display Success or Error Messages -->
+    <?php
+        if (!empty($_SESSION['errors'])) {
+            echo '<div class="alert alert-danger" role="alert">';
+            foreach ($_SESSION['errors'] as $error) {
+                echo '<p class="mb-0">' . htmlspecialchars($error, ENT_QUOTES, 'UTF-8') . '</p>';
+            }
+            echo '</div>';
+            unset($_SESSION['errors']); // Clear errors after displaying
+        }
+    ?>
+
+    <!-- Invoice Form -->
+    <form action="invoice.php" method="post" id="invoice-form" target="_blank">
+        <!-- CSRF Token -->
+        <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token'], ENT_QUOTES, 'UTF-8'); ?>">
+
+        <!-- Customer Details Card -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">Customer Details</h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <!-- Client Name -->
+                    <div class="col-md-6">
+                        <label for="client_name" class="form-label">Client Name <span class="text-danger">*</span></label>
+                        <input type="text" id="client_name" name="client_name" class="form-control" required>
+                    </div>
+                    <!-- Customer Phone Number -->
+                    <div class="col-md-6">
+                        <label for="customer_phone" class="form-label">Customer Phone Number <span class="text-danger">*</span></label>
+                        <input type="tel" id="customer_phone" name="customer_phone" class="form-control" pattern="[0-9]{10}" placeholder="e.g., 0771234567" required>
+                        <div class="form-text">Enter a 10-digit phone number without spaces or dashes.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Invoice Details Card -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">Invoice Details</h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <!-- Purchase Date -->
+                    <div class="col-md-4">
+                        <label for="purchase_date" class="form-label">Purchase Date <span class="text-danger">*</span></label>
+                        <input type="date" id="purchase_date" name="purchase_date" class="form-control" value="<?php echo date('Y-m-d'); ?>" required onchange="updateExpireDate()">
+                    </div>
+                    
+                    <!-- Expire Duration -->
+                    <div class="col-md-4">
+                        <label for="expire_duration" class="form-label">Expire Duration <span class="text-danger">*</span></label>
+                        <select id="expire_duration" name="expire_duration" class="form-select" required onchange="updateExpireDate()">
+                            <option value="">Select Duration</option>
+                            <option value="1_month">1 Month</option>
+                            <option value="2_months">2 Months</option>
+                            <option value="3_months">3 Months</option>
+                            <option value="6_months">6 Months</option>
+                            <option value="1_year">1 Year</option>
+                            <option value="2_years">2 Years</option>
+                            <option value="3_years">3 Years</option>
+                            <option value="5_years">5 Years</option>
+                        </select>
+                    </div>
+                    
+                    <!-- Expire Date Display -->
+                    <div class="col-md-4">
+                        <label for="expire_date" class="form-label">Expire Date</label>
+                        <input type="date" id="expire_date" name="expire_date" class="form-control" readonly>
+                    </div>
+                    
+                    <!-- Payment Status -->
+                    <div class="col-md-6">
+                        <label for="payment_status" class="form-label">Payment Status <span class="text-danger">*</span></label>
+                        <select id="payment_status" name="payment_status" class="form-select" required>
+                            <option value="Paid">Paid</option>
+                            <option value="Not Paid">Not Paid</option>
+                            <option value="Partial">Partial</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Products Section Card -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Products</h5>
+                <button type="button" class="btn btn-primary btn-sm" onclick="addProduct()">Add Product</button>
+            </div>
+            <div class="card-body" id="product-list">
+                <!-- Initial Product Item -->
+                <div class="product-item border p-3 mb-3 position-relative">
+                    <!-- Remove Product Button (Hidden for the first product) -->
+                    <button type="button" class="btn-close position-absolute top-0 end-0 m-2" aria-label="Close" onclick="removeProduct(this)"></button>
+
+                    <div class="row g-3">
+                        <!-- Product Name Dropdown -->
+                        <div class="col-md-6">
+                            <label class="form-label">Product Name <span class="text-danger">*</span></label>
+                            <select class="form-select product-name" name="product_name[]" onchange="fetchProductDetails(this)" required>
+                                <option value="">Select a product</option>
+                                <?php foreach ($products as $product): ?>
+                                    <option value="<?php echo htmlspecialchars($product['name'], ENT_QUOTES, 'UTF-8'); ?>">
+                                        <?php echo htmlspecialchars($product['name'], ENT_QUOTES, 'UTF-8'); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
+                        <!-- Quantity Input -->
+                        <div class="col-md-3">
+                            <label class="form-label">Quantity <span class="text-danger">*</span></label>
+                            <input type="number" class="form-control quantity" name="quantity[]" value="1" min="1" required oninput="calculateTotal()">
+                        </div>
+
+                        <!-- Price Display -->
+                        <div class="col-md-3">
+                            <label class="form-label">Price</label>
+                            <input type="hidden" class="form-control price-input" name="price[]">
+                            <p class="form-control-plaintext">LKR <span class="price">0.00</span></p>
+                        </div>
+
+                        <!-- Upgrader Key Field (Hidden by Default) -->
+                        <div class="col-12 upgrader-key-field d-none">
+                            <label class="form-label">Upgrader Key</label>
+                            <input type="text" class="form-control upgrader-key" name="upgrader_key[]" placeholder="Enter Upgrader Key">
+                        </div>
+                    </div>
+                </div>
+                <!-- Additional Product Items will be appended here by JavaScript -->
+            </div>
+        </div>
+
+        <!-- Discount and Total Card -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <div class="row g-3 align-items-center">
+                    <!-- Discount Input -->
+                    <div class="col-md-6">
+                        <label for="discount" class="form-label">Discount (%)</label>
+                        <input type="number" id="discount" name="discount" class="form-control" value="0" min="0" max="100" oninput="calculateTotal()">
+                        <div class="form-text">Enter a discount percentage to apply to the subtotal.</div>
+                    </div>
+                </div>
+                <hr>
+                <!-- Subtotal and Total Display -->
+                <div class="d-flex justify-content-end">
+                    <div class="me-5">
+                        <p class="mb-1"><strong>Subtotal:</strong> LKR <span id="subtotal">0.00</span></p>
+                        <p class="mb-1"><strong>Total:</strong> LKR <span id="total">0.00</span></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Submit Button -->
+        <div class="d-grid gap-2">
+            <button type="submit" class="btn btn-success btn-lg">Create Invoice</button>
+        </div>
+    </form>
+</div>
+
+<!-- Embed Products Data for JavaScript -->
+<script>
+    const products = <?php echo json_encode($products, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
+</script>
+
+<!-- Include External JavaScript -->
+<script src="../resources/js/invoice.js"></script>
+
+<?php include __DIR__ . '/../src/templates/footer.php'; ?> <!-- Include footer -->
+
+
+C:\xampp\htdocs\oldinvoice\Public\style.css
+/* General Styles */
+body {
+    font-family: 'Roboto', sans-serif;
+    background-color: #f4f4f9;
+    color: #333;
+    margin: 0;
+    padding: 0;
+}
+
+/* Container */
+.container {
+    max-width: 1200px;
+    margin: 40px auto;
+    padding: 20px;
+    background-color: #fff;
+    border-radius: 12px;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.1);
+}
+
+/* Headings */
+h1, h2 {
+    color: #2b2d42;
+    text-align: center;
+    margin-bottom: 20px;
+    font-weight: 600;
+}
+
+/* Form Styles */
+form {
+    display: flex;
+    flex-direction: column;
+}
+
+form label {
+    font-weight: 500;
+    margin-bottom: 5px;
+    color: #2b2d42;
+}
+
+form input[type="text"],
+form input[type="date"],
+form input[type="number"],
+form select {
+    padding: 12px;
+    margin-bottom: 15px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    transition: border-color 0.3s ease;
+}
+
+form input[type="text"]:focus,
+form input[type="date"]:focus,
+form input[type="number"]:focus,
+form select:focus {
+    border-color: #8d99ae;
+    outline: none;
+}
+
+.customer-details, .purchase-date, .expire-date-selector, .expire-date-display, .payment-status {
+    display: flex;
+    flex-direction: column;
+}
+
+/* Product Item Styles */
+#product-list {
+    margin-bottom: 20px;
+}
+
+.product-item {
+    border: 1px solid #ddd;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 15px;
+    background-color: #f9f9f9;
+    transition: box-shadow 0.3s ease;
+}
+
+.product-item:hover {
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+}
+
+.product-item label {
+    margin-top: 10px;
+}
+
+.product-item .price {
+    font-weight: bold;
+    margin-top: 10px;
+}
+
+/* Button Styles */
+button[type="button"],
+button[type="submit"] {
+    padding: 12px 20px;
+    margin-top: 10px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 1em;
+    transition: background-color 0.3s ease, transform 0.3s ease;
+}
+
+button[type="button"] {
+    background-color: #2b2d42;
+    color: #fff;
+}
+
+button[type="button"]:hover {
+    background-color: #394867;
+    transform: translateY(-2px);
+}
+
+button[type="submit"] {
+    background-color: #8d99ae;
+    color: #fff;
+}
+
+button[type="submit"]:hover {
+    background-color: #adb5bd;
+    transform: translateY(-2px);
+}
+
+/* Subtotal and Total */
+p {
+    font-size: 1.1em;
+    margin: 10px 0;
+}
+
+p span {
+    font-weight: bold;
+}
+
+/* Success and Error Messages */
+.success {
+    color: green;
+    font-weight: bold;
+}
+
+.error {
+    color: red;
+    font-weight: bold;
+}
+
+/* Table Styles */
+.table-container table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.table-container th, .table-container td {
+    border: 1px solid #ddd;
+    padding: 10px;
+    text-align: center;
+}
+
+.table-container th {
+    background-color: #2b2d42;
+    color: white;
+    font-weight: 600;
+}
+
+/* Footer */
+footer {
+    text-align: center;
+    padding: 15px;
+    color: #fff;
+    background-color: #2b2d42;
+    position: fixed;
+    bottom: 0;
+    width: 100%;
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
+}
+
+/* Header */
+header {
+    text-align: center;
+    padding: 20px;
+    background-color: #2b2d42;
+    color: #fff;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+/* Navbar Styles */
+.navbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background-color: #8d99ae;
+    padding: 15px 30px;
+    position: relative;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+}
+
+.navbar .logo {
+    font-size: 1.8em;
+    font-weight: bold;
+    color: #fff;
+}
+
+.navbar .logo a {
+    color: #fff;
+    text-decoration: none;
+}
+
+.nav-links {
+    list-style: none;
+    display: flex;
+    gap: 20px;
+}
+
+.nav-links li {
+    display: inline;
+}
+
+.nav-links a {
+    color: #fff;
+    text-decoration: none;
+    padding: 10px 20px;
+    border-radius: 5px;
+    transition: background-color 0.3s, color 0.3s;
+}
+
+.nav-links a:hover {
+    background-color: #555;
+    color: #fff;
+}
+
+/* Hamburger Menu Icon */
+.menu-icon {
+    display: none;
+    flex-direction: column;
+    cursor: pointer;
+}
+
+.menu-icon span {
+    width: 25px;
+    height: 3px;
+    background-color: #fff;
+    margin: 4px;
+    transition: transform 0.3s;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .navbar {
+        padding: 15px 20px;
+    }
+
+    /* Hide navigation links on mobile */
+    .nav-links {
+        display: none;
+        flex-direction: column;
+        position: absolute;
+        top: 60px;
+        right: 0;
+        background-color: #333;
+        width: 100%;
+        border-radius: 0 0 8px 8px;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+    }
+
+    .nav-links li {
+        text-align: right;
+    }
+
+    .nav-links a {
+        display: block;
+        padding: 15px 30px;
+        border-bottom: 1px solid #444;
+    }
+
+    /* Show the hamburger menu icon */
+    .menu-icon {
+        display: flex;
+    }
+
+    /* Show menu when active */
+    .nav-links.active {
+        display: flex;
+    }
+
+    /* Transform the menu icon when active */
+    .menu-icon.active span:nth-child(1) {
+        transform: rotate(45deg) translate(5px, 5px);
+    }
+
+    .menu-icon.active span:nth-child(2) {
+        opacity: 0;
+    }
+
+    .menu-icon.active span:nth-child(3) {
+        transform: rotate(-45deg) translate(7px, -6px);
+    }
+
+    /* Smoothly expand the navigation menu */
+    .nav-links {
+        transition: max-height 0.5s ease;
+        overflow: hidden;
+        max-height: 0;
+    }
+
+    .nav-links.active {
+        max-height: 500px; /* Adjust as necessary */
+    }
+}
+
+/* Public/style.css */
+
+/* Customize card headers */
+.card-header h5 {
+    margin: 0;
+    font-weight: bold;
+}
+
+/* Style for error messages */
+.alert-danger p {
+    margin: 0;
+}
+
+/* Style for form labels */
+.form-label {
+    font-weight: 500;
+}
+
+/* Style for remove product button */
+.product-item .btn-close {
+    background: transparent;
+    border: none;
+    opacity: 0.5;
+}
+
+.product-item .btn-close:hover {
+    opacity: 1;
+}
+
+/* Public/style.css */
+
+/* Adjust card headers */
+.card-header h5 {
+    margin: 0;
+    font-weight: bold;
+}
+
+/* Style for error messages */
+.alert-danger p {
+    margin: 0;
+}
+
+/* Style for form labels */
+.form-label {
+    font-weight: 500;
+}
+
+/* Style for remove product button */
+.product-item .btn-close {
+    background: transparent;
+    border: none;
+    opacity: 0.5;
+}
+
+.product-item .btn-close:hover {
+    opacity: 1;
+}
+
+/* Ensure the 'Add Product' button aligns to the right */
+.card-header .btn {
+    margin-left: auto;
+}
+
+/* Public/style.css */
+
+/* Adjust the card header font size */
+.card-header h4 {
+    font-size: 1.25rem;
+}
+
+/* Ensure modals are above other elements */
+.modal-backdrop {
+    z-index: 1040 !important;
+}
+
+.modal-content {
+    z-index: 1100 !important;
+}
+
+/* Style for the action dropdown */
+.dropdown-menu {
+    min-width: 120px;
+}
+
+/* Customize the appearance of the edit and delete buttons */
+.dropdown-item {
+    cursor: pointer;
+}
+
+/* Adjust table font size for better readability on small screens */
+.table {
+    font-size: 0.9rem;
+}
+
+/* Toast customizations */
+.toast {
+    opacity: 0.95;
+}
+
+
+C:\xampp\htdocs\oldinvoice\src\config\database.php
+<?php
+// src/config/database.php
+
+// Enable error reporting (Disable in production)
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+
+// Database credentials
+$host = 'localhost';
+$db   = 'subplanet_invoice'; // Replace with your actual database name
+$user = 'root';              // Replace with your MySQL username
+$pass = '';                  // Replace with your MySQL password
+$charset = 'utf8mb4';
+
+// Data Source Name (DSN)
+$dsn = "mysql:host=$host;dbname=$db;charset=$charset";
+
+// PDO options
+$options = [
+    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION, // Enable exceptions
+    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,       // Fetch associative arrays
+    PDO::ATTR_EMULATE_PREPARES   => false,                  // Disable emulation
+];
+
+try {
+    $pdo = new PDO($dsn, $user, $pass, $options);
+} catch (PDOException $e) {
+    // In production, log the error instead of displaying it
+    echo "<p class='error'>Database connection failed: " . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8') . "</p>";
+    exit();
+}
+?>
+
+
+C:\xampp\htdocs\oldinvoice\src\lib\functions.php
+<?php
+// src/lib/functions.php
+
+/**
+ * Enable error reporting for development (remove or comment out in production)
+ */
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+
+/**
+ * Database Configuration
+ */
+$host = 'localhost';
+$db   = 'subplanet_invoice';
+$user = 'root';
+$pass = ''; // Replace with your database password if any
+$charset = 'utf8mb4';
+
+$dsn = "mysql:host=$host;dbname=$db;charset=$charset";
+$options = [
+    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION, // Enable exceptions for errors
+    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,       // Fetch associative arrays
+    PDO::ATTR_EMULATE_PREPARES   => false,                  // Disable emulation of prepared statements
+];
+
+try {
+    $pdo = new PDO($dsn, $user, $pass, $options); // Establish PDO connection
+} catch (PDOException $e) {
+    error_log("Database Connection Failed: " . $e->getMessage());
+    exit("Database connection failed.");
+}
+
+/**
+ * Define Constants
+ */
+define('LOGO_PATH', __DIR__ . '/../../Public/images/logo.png'); // Adjust the path as necessary
+
+/**
+ * Autoload Composer Dependencies
+ */
+require_once __DIR__ . '/../../vendor/autoload.php'; // Correct path to Composer's autoloader
+
+/**
+ * Fetches a product by its name.
+ *
+ * @param string $product_name The name of the product.
+ * @return array|false The product data or false if not found.
+ */
+function getProductByName($product_name) {
+    global $pdo;
+    try {
+        $sql = "SELECT * FROM products WHERE name = :name LIMIT 1";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([':name' => $product_name]);
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        error_log("Error fetching product by name: " . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * Fetches a product by its product number.
+ *
+ * @param string $product_number The product number.
+ * @return array|false The product data or false if not found.
+ */
+function getProductByNumber($product_number) {
+    global $pdo;
+    try {
+        $sql = "SELECT * FROM products WHERE product_number = :product_number LIMIT 1";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([':product_number' => $product_number]);
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        error_log("Error fetching product by number: " . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * Fetches all products from the database.
+ *
+ * @return array An array of products.
+ */
+function getAllProducts() {
+    global $pdo;
+    try {
+        $sql = "SELECT * FROM products ORDER BY name ASC";
+        $stmt = $pdo->query($sql);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        error_log("Error fetching products: " . $e->getMessage());
+        return [];
+    }
+}
+
+/**
+ * Adds a new product to the database.
+ *
+ * @param string $product_number The unique product number.
+ * @param string $name           The name of the product.
+ * @param float  $price          The price of the product.
+ *
+ * @return bool True on success, false on failure.
+ */
+function addProduct($product_number, $name, $price) {
+    global $pdo;
+    try {
+        $sql = "INSERT INTO products (product_number, name, price) VALUES (:product_number, :name, :price)";
+        $stmt = $pdo->prepare($sql);
+        return $stmt->execute([
+            ':product_number' => $product_number,
+            ':name' => $name,
+            ':price' => $price
+        ]);
+    } catch (PDOException $e) {
+        error_log("Error adding product: " . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * Updates an existing product in the database.
+ *
+ * @param int    $product_id     The ID of the product to update.
+ * @param string $product_number The new product number.
+ * @param string $name           The new name of the product.
+ * @param float  $price          The new price of the product.
+ *
+ * @return bool True on success, false on failure.
+ */
+function updateProduct($product_id, $product_number, $name, $price) {
+    global $pdo;
+    try {
+        $sql = "UPDATE products SET product_number = :product_number, name = :name, price = :price WHERE id = :product_id";
+        $stmt = $pdo->prepare($sql);
+        return $stmt->execute([
+            ':product_number' => $product_number,
+            ':name' => $name,
+            ':price' => $price,
+            ':product_id' => $product_id
+        ]);
+    } catch (PDOException $e) {
+        error_log("Error updating product: " . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * Deletes a product from the database.
+ *
+ * @param int $product_id The ID of the product to delete.
+ *
+ * @return bool True on success, false on failure.
+ */
+function deleteProduct($product_id) {
+    global $pdo;
+    try {
+        $sql = "DELETE FROM products WHERE id = :product_id";
+        $stmt = $pdo->prepare($sql);
+        return $stmt->execute([':product_id' => $product_id]);
+    } catch (PDOException $e) {
+        error_log("Error deleting product: " . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * Generates a unique product number with the format: PXXXX
+ * where XXXX is a zero-padded sequential number.
+ *
+ * @return string|null The generated product number or null on failure.
+ */
+function generateProductNumber() {
+    global $pdo;
+    
+    $prefix = 'P';
+    try {
+        // Fetch the latest product number
+        $sql = "SELECT product_number FROM products ORDER BY id DESC LIMIT 1";
+        $stmt = $pdo->query($sql);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if ($result && preg_match('/^P(\d{4})$/', $result['product_number'], $matches)) {
+            $lastNumber = intval($matches[1]);
+            $newNumber = $lastNumber + 1;
+        } else {
+            // If no products exist or format is incorrect, start from 1
+            $newNumber = 1;
+        }
+        
+        // Format the sequential number with leading zeros (e.g., 0001)
+        $sequence = str_pad($newNumber, 4, '0', STR_PAD_LEFT);
+        
+        return $prefix . $sequence; // Example: P0001
+    } catch (PDOException $e) {
+        error_log("Error generating product number: " . $e->getMessage());
+        return null;
+    }
+}
+
+/**
+ * Generates a unique order number with the format: OXXXX
+ * where XXXX is a zero-padded sequential number.
+ *
+ * @return string|null The generated order number or null on failure.
+ */
+function generateOrderNumber() {
+    global $pdo;
+    
+    $prefix = 'O';
+    try {
+        // Fetch the latest order number
+        $sql = "SELECT order_number FROM invoices ORDER BY id DESC LIMIT 1";
+        $stmt = $pdo->query($sql);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if ($result && preg_match('/^O(\d{4})$/', $result['order_number'], $matches)) {
+            $lastNumber = intval($matches[1]);
+            $newNumber = $lastNumber + 1;
+        } else {
+            // If no invoices exist or format is incorrect, start from 1
+            $newNumber = 1;
+        }
+        
+        // Format the sequential number with leading zeros (e.g., 0001)
+        $sequence = str_pad($newNumber, 4, '0', STR_PAD_LEFT);
+        
+        return $prefix . $sequence; // Example: O0001
+    } catch (PDOException $e) {
+        error_log("Error generating order number: " . $e->getMessage());
+        return null;
+    }
+}
+
+/**
+ * Calculates the expire date based on the purchase date and duration.
+ *
+ * @param string $purchase_date    The purchase date in 'Y-m-d' format.
+ * @param string $expire_duration  The duration selected (e.g., '1_month').
+ *
+ * @return string|null The calculated expire date in 'Y-m-d' format or null on failure.
+ */
+function calculateExpireDate($purchase_date, $expire_duration) {
+    try {
+        $purchaseDate = new DateTime($purchase_date);
+        
+        switch ($expire_duration) {
+            case '1_month':
+                $purchaseDate->modify('+1 month');
+                break;
+            case '2_months':
+                $purchaseDate->modify('+2 months');
+                break;
+            case '3_months':
+                $purchaseDate->modify('+3 months');
+                break;
+            case '6_months':
+                $purchaseDate->modify('+6 months');
+                break;
+            case '1_year':
+                $purchaseDate->modify('+1 year');
+                break;
+            case '2_years':
+                $purchaseDate->modify('+2 years');
+                break;
+            case '3_years':
+                $purchaseDate->modify('+3 years');
+                break;
+            case '5_years':
+                $purchaseDate->modify('+5 years');
+                break;
+            default:
+                return null;
+        }
+        
+        return $purchaseDate->format('Y-m-d');
+    } catch (Exception $e) {
+        error_log("Error calculating expire date: " . $e->getMessage());
+        return null;
+    }
+}
+
+/**
+ * Inserts a new invoice into the database.
+ *
+ * @param PDO    $pdo            The PDO database connection object.
+ * @param string $order_number   The unique order number.
+ * @param string $purchase_date  The purchase date.
+ * @param string $expire_date    The expire date.
+ * @param string $client_name    The client's name.
+ * @param string $customer_phone The customer's phone number.
+ * @param string $payment_status The payment status.
+ *
+ * @return int|false The ID of the inserted invoice or false on failure.
+ */
+function insertInvoice($pdo, $order_number, $purchase_date, $expire_date, $client_name, $customer_phone, $payment_status) {
+    try {
+        $sql = "INSERT INTO invoices (order_number, purchase_date, expire_date, client_name, customer_phone, payment_status) 
+                VALUES (:order_number, :purchase_date, :expire_date, :client_name, :customer_phone, :payment_status)";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([
+            ':order_number' => $order_number,
+            ':purchase_date' => $purchase_date,
+            ':expire_date' => $expire_date,
+            ':client_name' => $client_name,
+            ':customer_phone' => $customer_phone,
+            ':payment_status' => $payment_status
+        ]);
+        return $pdo->lastInsertId();
+    } catch (PDOException $e) {
+        error_log("Error inserting invoice: " . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * Inserts an invoice item into the database.
+ *
+ * @param PDO         $pdo           The PDO database connection object.
+ * @param int         $invoice_id    The ID of the invoice.
+ * @param int         $product_id    The ID of the product.
+ * @param int         $quantity      The quantity of the product.
+ * @param float       $price         The price of the product.
+ * @param string|null $upgrader_key  The upgrader key for specific products.
+ *
+ * @return bool True on success, false on failure.
+ */
+function insertInvoiceItem($pdo, $invoice_id, $product_id, $quantity, $price, $upgrader_key = null) {
+    try {
+        $sql = "INSERT INTO invoice_items (invoice_id, product_id, quantity, price, upgrader_key) 
+                VALUES (:invoice_id, :product_id, :quantity, :price, :upgrader_key)";
+        $stmt = $pdo->prepare($sql);
+        return $stmt->execute([
+            ':invoice_id' => $invoice_id,
+            ':product_id' => $product_id,
+            ':quantity' => $quantity,
+            ':price' => $price,
+            ':upgrader_key' => $upgrader_key
+        ]);
+    } catch (PDOException $e) {
+        error_log("Error inserting invoice item: " . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * Updates the invoice totals in the database.
+ *
+ * @param PDO    $pdo        The PDO database connection object.
+ * @param int    $invoice_id The ID of the invoice.
+ * @param float  $subtotal   The subtotal amount.
+ * @param float  $discount   The discount percentage.
+ * @param float  $total      The total amount after discount.
+ *
+ * @return bool True on success, false on failure.
+ */
+function updateInvoiceTotals($pdo, $invoice_id, $subtotal, $discount, $total) {
+    try {
+        $sql = "UPDATE invoices SET subtotal = :subtotal, discount = :discount, total = :total WHERE id = :invoice_id";
+        $stmt = $pdo->prepare($sql);
+        return $stmt->execute([
+            ':subtotal' => $subtotal,
+            ':discount' => $discount,
+            ':total' => $total,
+            ':invoice_id' => $invoice_id
+        ]);
+    } catch (PDOException $e) {
+        error_log("Error updating invoice totals: " . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * Handles the creation of an invoice upon form submission.
+ *
+ * @return void
+ */
+function createInvoice() {
+    global $pdo; // Use the global $pdo object
+
+    $errors = [];
+
+    // Start session if not already started
+    if (session_status() == PHP_SESSION_NONE) {
+        session_start();
+    }
+
+    // CSRF Protection
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
+        $errors[] = "Invalid CSRF token.";
+    }
+
+    // Retrieve and sanitize form inputs
+    $client_name = trim($_POST['client_name'] ?? '');
+    $customer_phone = trim($_POST['customer_phone'] ?? '');
+    $payment_status = $_POST['payment_status'] ?? '';
+    $purchase_date = $_POST['purchase_date'] ?? ''; // Provided by the form
+    $expire_duration = $_POST['expire_duration'] ?? ''; // Selected duration
+    $discount = isset($_POST['discount']) ? floatval($_POST['discount']) : 0;
+
+    // Validate inputs
+    if (empty($client_name) || empty($customer_phone) || empty($purchase_date) || empty($expire_duration)) {
+        $errors[] = "Please fill in all required fields.";
+    }
+
+    if (!empty($errors)) {
+        $_SESSION['errors'] = $errors;
+        return;
+    }
+
+    // Generate order number
+    $order_number = generateOrderNumber();
+    if (!$order_number) {
+        $_SESSION['errors'][] = "Failed to generate order number. Please try again.";
+        return;
+    }
+
+    // Calculate expire_date
+    $expire_date = calculateExpireDate($purchase_date, $expire_duration);
+    if (!$expire_date) {
+        $_SESSION['errors'][] = "Failed to calculate expire date. Please try again.";
+        return;
+    }
+
+    // Insert invoice into the database
+    $invoice_id = insertInvoice($pdo, $order_number, $purchase_date, $expire_date, $client_name, $customer_phone, $payment_status);
+    if (!$invoice_id) {
+        $_SESSION['errors'][] = "Error creating invoice. Please try again.";
+        return;
+    }
+
+    // Insert invoice items and calculate subtotal, discount, total
+    $product_names = $_POST['product_name'] ?? [];
+    $quantities = $_POST['quantity'] ?? [];
+    $upgrader_keys = $_POST['upgrader_key'] ?? []; // Capture upgrader_key array
+    $subtotal = 0;
+    $items = [];
+
+    foreach ($product_names as $index => $product_name) {
+        $quantity = intval($quantities[$index] ?? 0);
+        if ($quantity <= 0) continue; // Skip invalid quantities
+
+        $product = getProductByName($product_name);
+
+        if ($product) {
+            $price = floatval($product['price']);
+            $total_price = $price * $quantity;
+            $subtotal += $total_price;
+
+            // Get the upgrader_key for this product if it exists
+            $upgrader_key = isset($upgrader_keys[$index]) ? trim($upgrader_keys[$index]) : null;
+            if ($product['product_number'] !== 'P0001') { // Only allow upgrader_key for Spotify
+                $upgrader_key = null;
+            }
+
+            $items[] = [
+                'product_number' => $product['product_number'],
+                'name' => $product['name'],
+                'price' => $price,
+                'quantity' => $quantity,
+                'upgrader_key' => $upgrader_key
+            ];
+
+            if (!insertInvoiceItem($pdo, $invoice_id, $product['id'], $quantity, $price, $upgrader_key)) {
+                $_SESSION['errors'][] = "Error adding product: " . htmlspecialchars($product['name'], ENT_QUOTES, 'UTF-8') . ". Please try again.";
+                return;
+            }
+        } else {
+            $_SESSION['errors'][] = "Product '" . htmlspecialchars($product_name, ENT_QUOTES, 'UTF-8') . "' not found.";
+            return;
+        }
+    }
+
+    if (empty($items)) {
+        $_SESSION['errors'][] = "No valid products selected.";
+        return;
+    }
+
+    // Calculate total after discount
+    $total = $subtotal - ($subtotal * ($discount / 100));
+
+    // Update invoice totals
+    if (!updateInvoiceTotals($pdo, $invoice_id, $subtotal, $discount, $total)) {
+        $_SESSION['errors'][] = "Error updating invoice totals. Please try again.";
+        return;
+    }
+
+    // Generate PDF
+    generateInvoicePDF([
+        'order_number' => $order_number,
+        'client_name' => $client_name,
+        'customer_phone' => $customer_phone,
+        'purchase_date' => $purchase_date,
+        'expire_date' => $expire_date,
+        'subtotal' => $subtotal,
+        'discount' => $discount,
+        'total' => $total,
+        'payment_status' => $payment_status
+    ], $items);
+
+    // Do not output anything else after PDF generation
+    exit;
+}
+
+/**
+ * Generates a PDF for the invoice.
+ *
+ * @param array $invoiceDetails Array containing invoice details.
+ * @param array $items          Array of items to be included in the invoice.
+ *
+ * @return void
+ */
+function generateInvoicePDF($invoiceDetails, $items) {
+    try {
+        // Check if headers have already been sent
+        if (headers_sent($file, $line)) {
+            error_log("Headers already sent in $file on line $line");
+            exit("Cannot generate PDF: Headers already sent.");
+        }
+
+        // Create new PDF document
+        $pdf = new \TCPDF(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
+
+        // Set document information
+        $pdf->SetCreator('Subplanet Invoice System');
+        $pdf->SetAuthor('Subplanet');
+        $pdf->SetTitle('Invoice ' . $invoiceDetails['order_number']);
+        $pdf->SetSubject('Invoice');
+        $pdf->SetKeywords('Invoice, PDF');
+
+        // Remove default header/footer
+        $pdf->setPrintHeader(false);
+        $pdf->setPrintFooter(false);
+
+        // Set margins
+        $pdf->SetMargins(15, 15, 15, true);
+
+        // Add a page
+        $pdf->AddPage();
+
+        // Add a background image if it exists
+        $bgImagePath = __DIR__ . '/../../Public/images/background.jpg'; // Confirm the path to your background image is correct
+        if (file_exists($bgImagePath)) {
+            // Remove margins to allow the background to cover the whole page
+            $pdf->SetAutoPageBreak(false, 0);
+            $pdf->SetMargins(0, 0, 0, true);
+
+            // Add the background image
+            $pdf->Image($bgImagePath, 0, 0, $pdf->getPageWidth(), $pdf->getPageHeight(), 'JPG', '', '', true, 300, '', false, false, 0, 'F', false, false);
+            $pdf->SetAutoPageBreak(true, 0);
+
+            // Reset margins if needed for the rest of the document
+            $pdf->SetMargins(15, 15, 15, true);
+        } else {
+            error_log("Background image not found at: " . $bgImagePath);
+        }
+
+        // Generate the HTML content
+        $html = '
+        <h1>Invoice</h1>
+        <table cellpadding="5">
+            <tr>
+                <td><img src="' . LOGO_PATH . '" width="100"></td>
+                <td>
+                    <h2>SUBSCRIPTION PLANET</h2>
+                    Phone: 075 696 4895<br>
+                    Email: subscriptionplanet@gmail.com
+                </td>
+            </tr>
+        </table>
+        <hr>
+        <table cellpadding="5">
+            <tr>
+                <td><strong>Order Number:</strong> ' . htmlspecialchars($invoiceDetails['order_number'], ENT_QUOTES, 'UTF-8') . '</td>
+                <td><strong>Payment Status:</strong> ' . htmlspecialchars($invoiceDetails['payment_status'], ENT_QUOTES, 'UTF-8') . '</td>
+            </tr>
+            <tr>
+                <td><strong>Client Name:</strong> ' . htmlspecialchars($invoiceDetails['client_name'], ENT_QUOTES, 'UTF-8') . '</td>
+                <td><strong>Customer Phone:</strong> ' . htmlspecialchars($invoiceDetails['customer_phone'], ENT_QUOTES, 'UTF-8') . '</td>
+            </tr>
+            <tr>
+                <td><strong>Purchase Date:</strong> ' . htmlspecialchars($invoiceDetails['purchase_date'], ENT_QUOTES, 'UTF-8') . '</td>
+                <td><strong>Expire Date:</strong> ' . htmlspecialchars($invoiceDetails['expire_date'], ENT_QUOTES, 'UTF-8') . '</td>
+            </tr>
+        </table>
+        <hr>
+        <h3>Items</h3>
+        <table border="1" cellpadding="5">
+            <thead>
+                <tr>
+                    <th><strong>Product Number</strong></th>
+                    <th><strong>Product Name</strong></th>
+                    <th><strong>Quantity</strong></th>
+                    <th><strong>Price</strong></th>
+                    <th><strong>Total</strong></th>
+                </tr>
+            </thead>
+            <tbody>';
+
+        // Add items to the table
+        foreach ($items as $item) {
+            $itemTotal = $item['price'] * $item['quantity'];
+            $html .= '
+                <tr>
+                    <td>' . htmlspecialchars($item['product_number'], ENT_QUOTES, 'UTF-8') . '</td>
+                    <td>' . htmlspecialchars($item['name'], ENT_QUOTES, 'UTF-8') . '</td>
+                    <td>' . htmlspecialchars($item['quantity'], ENT_QUOTES, 'UTF-8') . '</td>
+                    <td>LKR ' . number_format($item['price'], 2) . '</td>
+                    <td>LKR ' . number_format($itemTotal, 2) . '</td>
+                </tr>';
+        }
+
+        $html .= '
+            </tbody>
+        </table>';
+
+        // Check if all products are Spotify
+        $allSpotify = true;
+        foreach ($items as $item) {
+            if ($item['product_number'] !== 'P0001') { // Assuming 'P0001' is Spotify
+                $allSpotify = false;
+                break;
+            }
+        }
+
+        // If all products are Spotify, add Upgrader Key section
+        if ($allSpotify) {
+            $upgraderKeys = array_filter(array_column($items, 'upgrader_key'));
+            if (!empty($upgraderKeys)) {
+                // If multiple Upgrader Keys, list them; else, display single
+                if (count($upgraderKeys) > 1) {
+                    $html .= '<h3>Upgrader Keys</h3><ul>';
+                    foreach ($upgraderKeys as $key) {
+                        $html .= '<li>' . htmlspecialchars($key, ENT_QUOTES, 'UTF-8') . '</li>';
+                    }
+                    $html .= '</ul>';
+                } else {
+                    $html .= '
+                        <h3>Upgrader Key</h3>
+                        <p>' . htmlspecialchars(array_values($upgraderKeys)[0], ENT_QUOTES, 'UTF-8') . '</p>';
+                }
+            }
+        }
+
+        // Add summary section
+        $html .= '
+        <br>
+        <table cellpadding="5">
+            <tr>
+                <td><strong>Subtotal:</strong></td>
+                <td>LKR ' . number_format($invoiceDetails['subtotal'], 2) . '</td>
+            </tr>';
+
+        // Conditionally add discount if greater than 0
+        if ($invoiceDetails['discount'] > 0) {
+            $html .= '
+            <tr>
+                <td><strong>Discount (' . number_format($invoiceDetails['discount'], 2) . '%):</strong></td>
+                <td>-LKR ' . number_format($invoiceDetails['subtotal'] * ($invoiceDetails['discount'] / 100), 2) . '</td>
+            </tr>';
+        }
+
+        // Always add total
+        $html .= '
+            <tr>
+                <td><strong>Total:</strong></td>
+                <td>LKR ' . number_format($invoiceDetails['total'], 2) . '</td>
+            </tr>
+        </table>
+        <hr>';
+
+        // Add thank you message
+        $html .= '
+        <p>Thank you for your business!</p>
+        <p style="text-align:center;">Page 1 of 1</p>';
+
+        // Write HTML content to PDF
+        $pdf->writeHTML($html, true, false, true, false, '');
+
+        // Output the PDF to the browser
+        $pdf->Output('invoice_' . $invoiceDetails['order_number'] . '.pdf', 'I');
+        exit; // Ensure no further code is executed
+
+    } catch (Exception $e) {
+        // Clean the output buffer and end output buffering
+        if (ob_get_length()) {
+            ob_end_clean();
+        }
+        error_log("Error generating PDF: " . $e->getMessage());
+        // Output an error message
+        header('Content-Type: text/plain');
+        echo "PDF generation failed. Please try again later.";
+    }
+}
+?>
+
+
+C:\xampp\htdocs\oldinvoice\src\lib\product.php
+<?php
+// src/lib/Product.php
+
+namespace App\Lib;
+
+use PDO;
+use PDOException;
+
+/**
+ * Class Product
+ *
+ * Handles all product-related operations.
+ */
+class Product {
+    /**
+     * @var PDO
+     */
+    private $pdo;
+
+    /**
+     * Product constructor.
+     *
+     * @param PDO $pdo The PDO instance for database interactions.
+     */
+    public function __construct(PDO $pdo) {
+        $this->pdo = $pdo;
+    }
+
+    /**
+     * Fetches a product by its ID.
+     *
+     * @param int $product_id The ID of the product.
+     * @return array|false The product data or false if not found.
+     */
+    public function getById(int $product_id) {
+        try {
+            $sql = "SELECT * FROM products WHERE id = :id LIMIT 1";
+            $stmt = $this->pdo->prepare($sql);
+            $stmt->execute([':id' => $product_id]);
+            return $stmt->fetch(PDO::FETCH_ASSOC);
+        } catch (PDOException $e) {
+            error_log("Error fetching product by ID: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Fetches all products from the database.
+     *
+     * @return array An array of products.
+     */
+    public function getAll(): array {
+        try {
+            $sql = "SELECT * FROM products ORDER BY name ASC";
+            $stmt = $this->pdo->query($sql);
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (PDOException $e) {
+            error_log("Error fetching all products: " . $e->getMessage());
+            return [];
+        }
+    }
+
+    /**
+     * Adds a new product to the database.
+     *
+     * @param string $product_number The unique product number.
+     * @param string $name           The name of the product.
+     * @param float  $price          The price of the product.
+     * @return bool True on success, false on failure.
+     */
+    public function add(string $product_number, string $name, float $price): bool {
+        try {
+            $sql = "INSERT INTO products (product_number, name, price) VALUES (:product_number, :name, :price)";
+            $stmt = $this->pdo->prepare($sql);
+            return $stmt->execute([
+                ':product_number' => $product_number,
+                ':name' => $name,
+                ':price' => $price
+            ]);
+        } catch (PDOException $e) {
+            error_log("Error adding product: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Updates an existing product in the database.
+     *
+     * @param int    $product_id     The ID of the product to update.
+     * @param string $product_number The new product number.
+     * @param string $name           The new name of the product.
+     * @param float  $price          The new price of the product.
+     * @return bool True on success, false on failure.
+     */
+    public function update(int $product_id, string $product_number, string $name, float $price): bool {
+        try {
+            $sql = "UPDATE products SET product_number = :product_number, name = :name, price = :price WHERE id = :product_id";
+            $stmt = $this->pdo->prepare($sql);
+            return $stmt->execute([
+                ':product_number' => $product_number,
+                ':name' => $name,
+                ':price' => $price,
+                ':product_id' => $product_id
+            ]);
+        } catch (PDOException $e) {
+            error_log("Error updating product: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Deletes a product from the database.
+     *
+     * @param int $product_id The ID of the product to delete.
+     * @return bool True on success, false on failure.
+     */
+    public function delete(int $product_id): bool {
+        try {
+            $sql = "DELETE FROM products WHERE id = :product_id";
+            $stmt = $this->pdo->prepare($sql);
+            return $stmt->execute([':product_id' => $product_id]);
+        } catch (PDOException $e) {
+            error_log("Error deleting product: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Generates a unique product number with the format: PXXXX
+     * where XXXX is a zero-padded sequential number.
+     *
+     * @return string|null The generated product number or null on failure.
+     */
+    public function generateProductNumber(): ?string {
+        $prefix = 'P';
+        try {
+            // Fetch the latest product number
+            $sql = "SELECT product_number FROM products ORDER BY id DESC LIMIT 1";
+            $stmt = $this->pdo->query($sql);
+            $result = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if ($result && preg_match('/^P(\d{4})$/', $result['product_number'], $matches)) {
+                $lastNumber = intval($matches[1]);
+                $newNumber = $lastNumber + 1;
+            } else {
+                // If no products exist or format is incorrect, start from 1
+                $newNumber = 1;
+            }
+
+            // Format the sequential number with leading zeros (e.g., 0001)
+            $sequence = str_pad($newNumber, 4, '0', STR_PAD_LEFT);
+
+            return $prefix . $sequence; // Example: P0001
+        } catch (PDOException $e) {
+            error_log("Error generating product number: " . $e->getMessage());
+            return null;
+        }
+    }
+}
+?>
+
+
+C:\xampp\htdocs\oldinvoice\src\templates\footer.php
+<?php
+// src/templates/footer.php
+?>
+    <hr>
+    <footer class="text-center py-3">
+        <p>&copy; <?php echo date('Y'); ?> Subplanet. All rights reserved.</p>
+    </footer>
+</body>
+</html>
+
+
+C:\xampp\htdocs\oldinvoice\src\templates\header.php
+<?php
+// src/templates/header.php
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Subplanet Invoice System</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="../Public/style.css"> <!-- Adjust the path as necessary -->
+</head>
+<body>
+    <?php include __DIR__ . '/navbar.php'; ?> <!-- Include the navbar -->
+
+
+C:\xampp\htdocs\oldinvoice\src\templates\navbar.php
+<?php
+// src/templates/navbar.php
+?>
+<nav class="navbar navbar-expand-lg navbar-light bg-light">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="index.php">SUBSCRIPTION PLANET</a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"
+            aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse justify-content-end" id="navbarNav">
+            <ul class="navbar-nav">
+                <li class="nav-item">
+                    <a class="nav-link<?php echo basename($_SERVER['PHP_SELF']) === 'index.php' ? ' active' : ''; ?>" href="index.php">Home</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link<?php echo basename($_SERVER['PHP_SELF']) === 'invoice.php' ? ' active' : ''; ?>" href="invoice.php">Create Invoice</a>
+                </li>
+                <!-- Add more navigation links here as needed -->
+            </ul>
+        </div>
+    </div>
+</nav>
+
+
+C:\xampp\htdocs\oldinvoice\vendor\autoload.php
+<?php
+
+// autoload.php @generated by Composer
+
+if (PHP_VERSION_ID < 50600) {
+    echo 'Composer 2.3.0 dropped support for autoloading on PHP <5.6 and you are running '.PHP_VERSION.', please upgrade PHP or use Composer 2.2 LTS via "composer self-update --2.2". Aborting.'.PHP_EOL;
+    exit(1);
+}
+
+require_once __DIR__ . '/composer/autoload_real.php';
+
+return ComposerAutoloaderInit30c7298b5b4dcb0f892bc2ffeacc504a::getLoader();
+
+C:\xampp\htdocs\oldinvoice\resources\js\index.js
+// Public/js/index.js
+
+document.addEventListener('DOMContentLoaded', () => {
+    // Initialize Bootstrap's Modals
+    const editProductModal = new bootstrap.Modal(document.getElementById('editProductModal'));
+
+    // Event listener for edit buttons to populate the modal with product data
+    document.querySelectorAll('.edit-btn').forEach(button => {
+        button.addEventListener('click', function() {
+            const productId = this.getAttribute('data-id');
+            const productNumber = this.getAttribute('data-number');
+            const productName = this.getAttribute('data-name');
+            const productPrice = this.getAttribute('data-price');
+
+            // Populate the modal fields with product data
+            document.getElementById('modal_product_id').value = productId;
+            document.getElementById('modal_product_number').value = productNumber;
+            document.getElementById('modal_name').value = productName;
+            document.getElementById('modal_price').value = productPrice;
+
+            // Show the modal
+            editProductModal.show();
+        });
+    });
+
+    // Bootstrap's custom validation
+    const forms = document.querySelectorAll('.needs-validation');
+
+    Array.prototype.slice.call(forms).forEach(function(form) {
+        form.addEventListener('submit', function(event) {
+            if (!form.checkValidity()) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+
+            form.classList.add('was-validated');
+        }, false);
+    });
+});
+
+C:\xampp\htdocs\oldinvoice\resources\js\invoice.js
+// resources/js/invoice.js
+
+document.addEventListener('DOMContentLoaded', () => {
+    /**
+     * Updates the expire date based on the selected duration.
+     */
+    function updateExpireDate() {
+        const purchaseDateInput = document.getElementById('purchase_date');
+        const expireDurationSelect = document.getElementById('expire_duration');
+        const expireDateInput = document.getElementById('expire_date');
+
+        const purchaseDateValue = purchaseDateInput.value;
+        const duration = expireDurationSelect.value;
+
+        console.log(`Updating expire date. Purchase Date: ${purchaseDateValue}, Duration: ${duration}`);
+
+        if (!purchaseDateValue || !duration) {
+            expireDateInput.value = '';
+            console.warn('Purchase date or duration not selected. Expire date cleared.');
+            return;
+        }
+
+        let purchaseDate = new Date(purchaseDateValue);
+        if (isNaN(purchaseDate)) {
+            console.error('Invalid purchase date.');
+            expireDateInput.value = '';
+            return;
+        }
+
+        switch (duration) {
+            case '1_month':
+                purchaseDate.setMonth(purchaseDate.getMonth() + 1);
+                break;
+            case '2_months':
+                purchaseDate.setMonth(purchaseDate.getMonth() + 2);
+                break;
+            case '3_months':
+                purchaseDate.setMonth(purchaseDate.getMonth() + 3);
+                break;
+            case '6_months':
+                purchaseDate.setMonth(purchaseDate.getMonth() + 6);
+                break;
+            case '1_year':
+                purchaseDate.setFullYear(purchaseDate.getFullYear() + 1);
+                break;
+            case '2_years':
+                purchaseDate.setFullYear(purchaseDate.getFullYear() + 2);
+                break;
+            case '3_years':
+                purchaseDate.setFullYear(purchaseDate.getFullYear() + 3);
+                break;
+            case '5_years':
+                purchaseDate.setFullYear(purchaseDate.getFullYear() + 5);
+                break;
+            default:
+                console.warn('Unknown duration selected.');
+                expireDateInput.value = '';
+                return;
+        }
+
+        const year = purchaseDate.getFullYear();
+        const month = String(purchaseDate.getMonth() + 1).padStart(2, '0');
+        const day = String(purchaseDate.getDate()).padStart(2, '0');
+
+        const formattedExpireDate = `${year}-${month}-${day}`;
+        expireDateInput.value = formattedExpireDate;
+
+        console.log(`Expire date updated to: ${formattedExpireDate}`);
+    }
+
+    /**
+     * Fetches product details based on the selected product name and updates the form fields.
+     * Also, shows or hides the Upgrader Key field for specific products.
+     *
+     * @param {HTMLElement} selectElement - The select element for product names.
+     */
+    function fetchProductDetails(selectElement) {
+        const selectedProductName = selectElement.value;
+        console.log(`Selected Product: ${selectedProductName}`);
+
+        // Ensure 'products' array is available
+        if (typeof products === 'undefined' || !Array.isArray(products)) {
+            console.error('Products data is not defined or is not an array.');
+            return;
+        }
+
+        // Find the product object from the products array
+        const product = products.find(p => p.name === selectedProductName);
+
+        if (product) {
+            console.log(`Product found:`, product);
+            const productItem = selectElement.closest('.product-item');
+
+            if (!productItem) {
+                console.error('Could not find the parent .product-item element.');
+                return;
+            }
+
+            // Update hidden fields
+            const productNumberInput = productItem.querySelector('.product-number');
+            const priceInput = productItem.querySelector('.price-input');
+            const priceDisplay = productItem.querySelector('.price span');
+
+            if (productNumberInput && priceInput && priceDisplay) {
+                productNumberInput.value = product.product_number;
+                priceInput.value = product.price;
+                priceDisplay.textContent = parseFloat(product.price).toFixed(2);
+
+                console.log(`Updated product number to: ${product.product_number}`);
+                console.log(`Updated price to: ${product.price}`);
+
+                calculateTotal();
+            } else {
+                console.error('Failed to locate product-number, price-input, or price display elements.');
+            }
+
+            // Show or hide the Upgrader Key field based on the selected product
+            const upgraderKeyField = productItem.querySelector('.upgrader-key-field');
+            if (upgraderKeyField) {
+                if (product.product_number.toLowerCase() === 'p0001') { // Ensure case-insensitive comparison
+                    upgraderKeyField.classList.remove('d-none');
+                    upgraderKeyField.classList.add('d-block');
+                    console.log('Upgrader Key field displayed.');
+                } else {
+                    upgraderKeyField.classList.remove('d-block');
+                    upgraderKeyField.classList.add('d-none');
+                    // Clear the Upgrader Key input if it's hidden
+                    const upgraderKeyInput = upgraderKeyField.querySelector('.upgrader-key');
+                    if (upgraderKeyInput) {
+                        upgraderKeyInput.value = '';
+                        console.log('Upgrader Key field hidden and input cleared.');
+                    }
+                }
+            } else {
+                console.warn('Upgrader Key field element not found.');
+            }
+        } else {
+            console.warn(`Product "${selectedProductName}" not found in products array.`);
+            const productItem = selectElement.closest('.product-item');
+            if (productItem) {
+                const upgraderKeyField = productItem.querySelector('.upgrader-key-field');
+                if (upgraderKeyField) {
+                    upgraderKeyField.classList.remove('d-block');
+                    upgraderKeyField.classList.add('d-none');
+                    const upgraderKeyInput = upgraderKeyField.querySelector('.upgrader-key');
+                    if (upgraderKeyInput) {
+                        upgraderKeyInput.value = '';
+                        console.log('Upgrader Key field hidden and input cleared.');
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Calculates the subtotal and total based on selected products, quantities, and discounts.
+     */
+    function calculateTotal() {
+        let subtotal = 0;
+        const productItems = document.querySelectorAll('.product-item');
+
+        if (!productItems.length) {
+            console.warn('No products found in the invoice.');
+        }
+
+        productItems.forEach(item => {
+            const priceInput = item.querySelector('.price-input');
+            const quantityInput = item.querySelector('.quantity');
+            const priceDisplay = item.querySelector('.price span');
+            const productName = item.querySelector('.product-name').value || 'Unknown';
+
+            if (!priceInput || !quantityInput || !priceDisplay) {
+                console.error(`Missing elements in product item for "${productName}".`);
+                return;
+            }
+
+            const price = parseFloat(priceInput.value) || 0;
+            const quantity = parseInt(quantityInput.value) || 1;
+            const totalItemPrice = price * quantity;
+            subtotal += totalItemPrice;
+
+            console.log(`Product: ${productName}, Price: ${price}, Quantity: ${quantity}, Total: ${totalItemPrice}`);
+        });
+
+        const discountInput = document.getElementById('discount');
+        const discount = parseFloat(discountInput.value) || 0;
+        const total = subtotal - (subtotal * (discount / 100));
+
+        document.getElementById('subtotal').textContent = subtotal.toFixed(2);
+        document.getElementById('total').textContent = total.toFixed(2);
+
+        console.log(`Subtotal: ${subtotal}, Discount: ${discount}%, Total: ${total}`);
+    }
+
+    /**
+     * Adds a new product entry to the invoice form.
+     */
+    function addProduct() {
+        const productList = document.getElementById('product-list');
+        const productItem = document.createElement('div');
+        productItem.className = 'product-item border p-3 mb-3 position-relative';
+
+        // Remove Product Button
+        const removeButton = document.createElement('button');
+        removeButton.type = 'button';
+        removeButton.className = 'btn-close position-absolute top-0 end-0 m-2';
+        removeButton.setAttribute('aria-label', 'Remove Product');
+        removeButton.onclick = function() {
+            removeProduct(this);
+        };
+        productItem.appendChild(removeButton);
+
+        // Row for Product Details
+        const row = document.createElement('div');
+        row.className = 'row g-3';
+
+        // Product Name Dropdown
+        const productNameCol = document.createElement('div');
+        productNameCol.className = 'col-md-6';
+        const productNameLabel = document.createElement('label');
+        productNameLabel.className = 'form-label';
+        productNameLabel.textContent = 'Product Name *';
+        const productNameSelect = document.createElement('select');
+        productNameSelect.className = 'form-select product-name';
+        productNameSelect.name = 'product_name[]';
+        productNameSelect.required = true;
+        productNameSelect.onchange = function() {
+            fetchProductDetails(this);
+        };
+        const defaultOption = document.createElement('option');
+        defaultOption.value = '';
+        defaultOption.textContent = 'Select a product';
+        productNameSelect.appendChild(defaultOption);
+        products.forEach(product => {
+            const option = document.createElement('option');
+            option.value = product.name;
+            option.textContent = product.name;
+            productNameSelect.appendChild(option);
+        });
+        productNameCol.appendChild(productNameLabel);
+        productNameCol.appendChild(productNameSelect);
+        row.appendChild(productNameCol);
+
+        // Quantity Input
+        const quantityCol = document.createElement('div');
+        quantityCol.className = 'col-md-3';
+        const quantityLabel = document.createElement('label');
+        quantityLabel.className = 'form-label';
+        quantityLabel.textContent = 'Quantity *';
+        const quantityInput = document.createElement('input');
+        quantityInput.type = 'number';
+        quantityInput.className = 'form-control quantity';
+        quantityInput.name = 'quantity[]';
+        quantityInput.value = '1';
+        quantityInput.min = '1';
+        quantityInput.required = true;
+        quantityInput.oninput = calculateTotal;
+        quantityCol.appendChild(quantityLabel);
+        quantityCol.appendChild(quantityInput);
+        row.appendChild(quantityCol);
+
+        // Price Display
+        const priceCol = document.createElement('div');
+        priceCol.className = 'col-md-3';
+        const priceLabel = document.createElement('label');
+        priceLabel.className = 'form-label';
+        priceLabel.textContent = 'Price';
+        const priceInput = document.createElement('input');
+        priceInput.type = 'hidden';
+        priceInput.className = 'form-control price-input';
+        priceInput.name = 'price[]';
+        const priceDisplay = document.createElement('p');
+        priceDisplay.className = 'form-control-plaintext';
+        priceDisplay.innerHTML = 'LKR <span class="price">0.00</span>';
+        priceCol.appendChild(priceLabel);
+        priceCol.appendChild(priceInput);
+        priceCol.appendChild(priceDisplay);
+        row.appendChild(priceCol);
+
+        // Upgrader Key Field (Hidden by Default)
+        const upgraderKeyCol = document.createElement('div');
+        upgraderKeyCol.className = 'col-12 upgrader-key-field d-none';
+        const upgraderKeyLabel = document.createElement('label');
+        upgraderKeyLabel.className = 'form-label';
+        upgraderKeyLabel.textContent = 'Upgrader Key';
+        const upgraderKeyInput = document.createElement('input');
+        upgraderKeyInput.type = 'text';
+        upgraderKeyInput.className = 'form-control upgrader-key';
+        upgraderKeyInput.name = 'upgrader_key[]';
+        upgraderKeyInput.placeholder = 'Enter Upgrader Key';
+        upgraderKeyCol.appendChild(upgraderKeyLabel);
+        upgraderKeyCol.appendChild(upgraderKeyInput);
+        row.appendChild(upgraderKeyCol);
+
+        productItem.appendChild(row);
+        productList.appendChild(productItem);
+
+        console.log('Added a new product entry.');
+    }
+
+    /**
+     * Removes a product entry from the invoice form.
+     *
+     * @param {HTMLElement} button - The remove button that was clicked.
+     */
+    function removeProduct(button) {
+        const productItem = button.closest('.product-item');
+        if (productItem) {
+            productItem.remove();
+            console.log('Removed a product entry.');
+            calculateTotal();
+        } else {
+            console.error('Failed to locate the product item to remove.');
+        }
+    }
+
+    /**
+     * Resets the form after submission, clearing all fields and hiding Upgrader Key inputs.
+     */
+    function resetForm() {
+        const form = document.getElementById('invoice-form');
+        form.reset();
+        console.log('Form has been reset.');
+        calculateTotal();
+        updateExpireDate();
+
+        // Hide all Upgrader Key fields and clear their values
+        const upgraderKeyFields = document.querySelectorAll('.upgrader-key-field');
+        upgraderKeyFields.forEach(field => {
+            field.classList.remove('d-block');
+            field.classList.add('d-none');
+            const upgraderKeyInput = field.querySelector('.upgrader-key');
+            if (upgraderKeyInput) {
+                upgraderKeyInput.value = '';
+                console.log('Upgrader Key input cleared.');
+            }
+        });
+
+        // Reset Product Items to initial state
+        const productList = document.getElementById('product-list');
+        productList.innerHTML = `
+            <div class="product-item border p-3 mb-3 position-relative">
+                <!-- Remove Product Button -->
+                <button type="button" class="btn-close position-absolute top-0 end-0 m-2" aria-label="Remove Product" onclick="removeProduct(this)"></button>
+
+                <div class="row g-3">
+                    <!-- Product Name Dropdown -->
+                    <div class="col-md-6">
+                        <label class="form-label">Product Name <span class="text-danger">*</span></label>
+                        <select class="form-select product-name" name="product_name[]" onchange="fetchProductDetails(this)" required>
+                            <option value="">Select a product</option>
+                            ${products.map(product => `<option value="${product.name}">${product.name}</option>`).join('')}
+                        </select>
+                    </div>
+
+                    <!-- Quantity Input -->
+                    <div class="col-md-3">
+                        <label class="form-label">Quantity <span class="text-danger">*</span></label>
+                        <input type="number" class="form-control quantity" name="quantity[]" value="1" min="1" required oninput="calculateTotal()">
+                    </div>
+
+                    <!-- Price Display -->
+                    <div class="col-md-3">
+                        <label class="form-label">Price</label>
+                        <input type="hidden" class="form-control price-input" name="price[]">
+                        <p class="form-control-plaintext">LKR <span class="price">0.00</span></p>
+                    </div>
+
+                    <!-- Upgrader Key Field (Hidden by Default) -->
+                    <div class="col-12 upgrader-key-field d-none">
+                        <label class="form-label">Upgrader Key</label>
+                        <input type="text" class="form-control upgrader-key" name="upgrader_key[]" placeholder="Enter Upgrader Key">
+                    </div>
+                </div>
+            </div>
+        `;
+        console.log('Product list has been reset to initial state.');
+    }
+
+    /**
+     * Handles the form submission by resetting the form after a short delay.
+     * This ensures that the form data is submitted before the form is cleared.
+     */
+    function handleFormSubmission() {
+        const form = document.getElementById('invoice-form');
+        form.addEventListener('submit', function(event) {
+            console.log('Form submission initiated.');
+            // Delay reset to ensure form data is sent
+            setTimeout(() => {
+                resetForm();
+            }, 1000);
+        });
+    }
+
+    // Initialize event listeners and calculations
+    function initialize() {
+        console.log('Initializing invoice.js...');
+        calculateTotal();
+        updateExpireDate();
+        handleFormSubmission();
+        console.log('Initialization complete.');
+    }
+
+    // Initialize the script
+    initialize();
+
+    // Expose functions to global scope for dynamic elements
+    window.updateExpireDate = updateExpireDate;
+    window.fetchProductDetails = fetchProductDetails;
+    window.calculateTotal = calculateTotal;
+    window.addProduct = addProduct;
+    window.removeProduct = removeProduct;
+});
+
+
+C:\xampp\htdocs\oldinvoice\resources\js\script.js
+document.addEventListener('DOMContentLoaded', () => {
+    /**
+     * Adds a new product selection row to the invoice form.
+     */
+    function addProduct() {
+        const productList = document.getElementById('product-list');
+        const productItem = document.createElement('div');
+        productItem.classList.add('product-item');
+        productItem.innerHTML = `
+            <label for="product_name">Product Name:</label>
+            <select class="product-name" name="product_name[]" onchange="fetchProductDetails(this)" required>
+                <option value="">Select a product</option>
+                ${populateProductOptions()}
+            </select>
+
+            <input type="hidden" class="product-number" name="product_number[]">
+            <input type="hidden" class="price-input" name="price[]">
+
+            <label for="quantity">Quantity:</label>
+            <input type="number" class="quantity" name="quantity[]" value="1" min="1" required oninput="calculateTotal()"><br><br>
+
+            <p class="price">Price: <span>0.00</span></p>
+        `;
+        productList.appendChild(productItem);
+
+        // Attach event listeners to the new quantity input
+        productItem.querySelector('.quantity').addEventListener('input', calculateTotal);
+    }
+
+    /**
+     * Populates the product selection options dynamically based on the 'products' array.
+     *
+     * @return {string} HTML string of option elements.
+     */
+    function populateProductOptions() {
+        // Escape HTML to prevent XSS
+        return products.map(product => `<option value="${escapeHtml(product.name)}">${escapeHtml(product.name)}</option>`).join('');
+    }
+
+    /**
+     * Calculates and updates the subtotal and total based on selected products and discount.
+     */
+    function calculateTotal() {
+        const productItems = document.querySelectorAll('.product-item');
+        const discount = parseFloat(document.getElementById('discount').value) || 0;
+        let subtotal = 0;
+
+        productItems.forEach(item => {
+            const quantity = parseInt(item.querySelector('.quantity').value) || 0;
+            const price = parseFloat(item.querySelector('.price span').textContent) || 0;
+            subtotal += price * quantity;
+        });
+
+        // Update the subtotal display
+        document.getElementById('subtotal').textContent = subtotal.toFixed(2);
+        
+        // Calculate the total after applying the discount
+        const discountAmount = subtotal * (discount / 100);
+        const total = subtotal - discountAmount;
+
+        // Update the total display
+        document.getElementById('total').textContent = total.toFixed(2);
+    }
+
+    /**
+     * Fetches product details (product_number and price) via AJAX based on the selected product name.
+     *
+     * @param {HTMLElement} element The select element that triggered the change.
+     */
+    window.fetchProductDetails = function(element) {
+        const productName = element.value;
+        const productItem = element.closest('.product-item');
+
+        if (productName) {
+            fetch(`fetch_price.php?product_name=${encodeURIComponent(productName)}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        productItem.querySelector('.product-number').value = data.product_number;
+                        productItem.querySelector('.price span').textContent = parseFloat(data.price).toFixed(2);
+                        productItem.querySelector('.price-input').value = data.price;
+                        calculateTotal(); // Recalculate total after price update
+                    } else {
+                        alert(data.message);
+                        element.value = ""; // Reset the select if product not found
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching product details:', error);
+                    alert('An error occurred while fetching product details.');
+                });
+        }
+    }
+
+    /**
+     * Updates the expire date field based on the selected purchase date and duration.
+     */
+    window.updateExpireDate = function() {
+        const purchaseDate = document.getElementById('purchase_date').value;
+        const duration = document.getElementById('expire_duration').value;
+        const expireDateField = document.getElementById('expire_date');
+
+        if (purchaseDate && duration) {
+            const date = new Date(purchaseDate);
+            switch (duration) {
+                case '1_month':
+                    date.setMonth(date.getMonth() + 1);
+                    break;
+                case '2_months':
+                    date.setMonth(date.getMonth() + 2);
+                    break;
+                case '3_months':
+                    date.setMonth(date.getMonth() + 3);
+                    break;
+                case '6_months':
+                    date.setMonth(date.getMonth() + 6);
+                    break;
+                case '1_year':
+                    date.setFullYear(date.getFullYear() + 1);
+                    break;
+                case '2_years':
+                    date.setFullYear(date.getFullYear() + 2);
+                    break;
+                case '3_years':
+                    date.setFullYear(date.getFullYear() + 3);
+                    break;
+                case '5_years':
+                    date.setFullYear(date.getFullYear() + 5);
+                    break;
+                default:
+                    expireDateField.value = '';
+                    return;
+            }
+            const formattedDate = date.toISOString().split('T')[0];
+            expireDateField.value = formattedDate;
+        } else {
+            expireDateField.value = '';
+        }
+    }
+
+    /**
+     * Escapes HTML special characters to prevent XSS.
+     *
+     * @param {string} text The text to escape.
+     * @return {string} The escaped text.
+     */
+    function escapeHtml(text) {
+        const map = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#039;'
+        };
+        return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+    }
+
+    // Expose functions to the global scope
+    window.addProduct = addProduct;
+    window.updateExpireDate = updateExpireDate;
+
+    // Attach event listeners
+    document.getElementById('discount').addEventListener('input', calculateTotal);
+    document.querySelectorAll('.quantity').forEach(input => input.addEventListener('input', calculateTotal));
+});
+
+document.getElementById('invoice-form').addEventListener('submit', function(event) {
+    event.preventDefault(); // Prevent default form submission
+
+    const formData = new FormData(this);
+
+    fetch('invoice.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.blob())
+    .then(blob => {
+        const url = window.URL.createObjectURL(blob);
+        window.open(url, '_blank'); // Open PDF in a new tab
+    })
+    .catch(error => {
+        console.error('Error generating invoice PDF:', error);
+        alert('An error occurred while generating the invoice. Please try again.');
+    });
+});

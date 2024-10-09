@@ -1,0 +1,17 @@
+{
+    "name": "ashan/oldinvoice",
+    "type": "project",
+    "autoload": {
+        "psr-4": {
+            "Ashan\\Oldinvoice\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "LordAshan",
+            "email": "ashanek99@gmail.com"
+        }
+    ],
+    "minimum-stability": "stable",
+    "require": {}
+}
